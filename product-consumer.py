@@ -25,16 +25,19 @@ class Producer(Thread):
         super(Producer, self).__init__(name=self.__class__.__name__,
                                        args=args, kwargs=kwargs)
         self.output = output
+        # FIXME: exit event should be one for all entities/classes and coming in parameters
         self.exit = Event()
 
     def run(self):
         logger = logging.getLogger(self.__class__.__name__)
         numbers = range(5)
         while not self.exit.is_set():
+            # FIXME: Condition also must be as an input parameter in __init__
             with condition:
                 number = random.choice(numbers)
                 with open(self.output, 'a') as f:
                     logger.info("writing \"{}\" at pos {}".format(number, f.tell()))
+                    # FIXME: Use os.linesep instead of '\n'
                     f.write("{}\n".format(number))
                 condition.notify()
             time.sleep(random.random())
