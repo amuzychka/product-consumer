@@ -39,6 +39,8 @@ class Producer(Thread):
                     logger.info("writing \"{}\" at pos {}".format(number, f.tell()))
                     # FIXME: Use os.linesep instead of '\n'
                     f.write("{}\n".format(number))
+                # FIXME: I think notifyAll() should be here (when, for example, you have more than one consumer thread)
+                # See https://www.bogotobogo.com/python/Multithread/python_multithreading_Synchronization_Condition_Objects_Producer_Consumer.php
                 condition.notify()
             time.sleep(random.random())
 
@@ -122,6 +124,7 @@ if __name__ == "__main__":
     producer = Producer(output=args.file_output)
 
     try:
+        # FIXME: Try to improve functionality: one producer thread and 2 consumer threads (use Lock for lock start position for every consumer and also producer)
         consumer.start()
         producer.start()
         while True:
