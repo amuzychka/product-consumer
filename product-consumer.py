@@ -1,87 +1,118 @@
 #!/usr/bin/env python2
+"""
+Usefull links:
+https://www.bogotobogo.com/python/Multithread/python_multithreading_Synchronization_Condition_Objects_Producer_Consumer.php
+"""
+
 import argparse
 import logging
 import os
 import random
 import time
 import signal
+from threading import Thread, Condition, Event, Lock
 
-from threading import Thread, Condition, Event
+msg_format = "%(asctime)s %(name)s %(levelname)-6s %(threadName)-10s|%(message)s"
+dt_format = "%H:%M:%s"
+logging.basicConfig(format=msg_format, datefmt=dt_format)
+
+# Note: extra spaces in some log messages for better output visualization
+logger = logging.getLogger("ProdCons")
 
 
-_START_POSITION = 0  # global usage
+class PositionLock(object):
+
+    def __init__(self, start_position):
+        self.lock = Lock()
+        self._position = start_position
+
+    def __enter__(self):
+        self.lock.acquire()
+        return self
+
+    def __exit__(self, *args, **kwargs):
+        self.lock.release()
+
+    @property
+    def position(self):
+        logger.debug("    now read: {} >>".format(self._position))
+        return self._position
+
+    @position.setter
+    def position(self, value):
+        logger.debug("    << next read: {}".format(value))
+        self._position = value
 
 
 class Producer(Thread):
     """Producer class: Write outputs to output file"""
 
-    def __init__(self, output, *args, **kwargs):
+    def __init__(self, output, condition, event, *args, **kwargs):
         """
         Producer instance
         :param output: str: path to the output file
+        :param condition: threading.Condition: shared condition, notify consumers
+        :param event: threading.Event: control exit condition
         :param args: args
         :param kwargs: kwargs
         """
-        super(Producer, self).__init__(name=self.__class__.__name__,
-                                       args=args, kwargs=kwargs)
+        super(Producer, self).__init__(*args, **kwargs)
         self.output = output
-        # FIXME: exit event should be one for all entities/classes and coming in parameters
-        self.exit = Event()
+        self.condition = condition
+        self.exit = event
 
     def run(self):
-        logger = logging.getLogger(self.__class__.__name__)
         numbers = range(5)
         while not self.exit.is_set():
-            # FIXME: Condition also must be as an input parameter in __init__
-            with condition:
+            with self.condition:
                 number = random.choice(numbers)
                 with open(self.output, 'a') as f:
-                    logger.info("writing \"{}\" at pos {}".format(number, f.tell()))
-                    # FIXME: Use os.linesep instead of '\n'
-                    f.write("{}\n".format(number))
-                # FIXME: I think notifyAll() should be here (when, for example, you have more than one consumer thread)
-                # See https://www.bogotobogo.com/python/Multithread/python_multithreading_Synchronization_Condition_Objects_Producer_Consumer.php
-                condition.notify()
+                    logger.info("  writing \"{}\" at pos {}".format(number, f.tell()))
+                    f.write(str(number))
+                    f.write(os.linesep)
+                    self.condition.notifyAll()
             time.sleep(random.random())
 
 
 class Consumer(Thread):
     """Consumer class, read lines from input file"""
 
-    def __init__(self, input, follow=False, *args, **kwargs):
+    def __init__(self, input, condition, event, position_lock, *args, **kwargs):
         """
         Consumer instance
         :param input: str: path to the input file
-        :param follow: boolean: if True - takes as start position value from
-                                variable "_START_POSITION"
+        :param condition: threading.Condition: shared condition, wait for producer
+        :param event: threading.Event: control exit condition
+        :param position_lock: PositionLock: position instance to sync consumer positions
         :param args: args
         :param kwargs: kwargs
         """
-        super(Consumer, self).__init__(name=self.__class__.__name__,
-                                       args=args, kwargs=kwargs)
+        super(Consumer, self).__init__(*args, **kwargs)
         self.input = input
-        self.follow = follow
-        self.exit = Event()
+        self.condition = condition
+        self.exit = event
+        self.position_lock = position_lock
 
     def run(self):
-        logger = logging.getLogger(self.__class__.__name__)
-        global _START_POSITION
-        self.position = _START_POSITION if self.follow else 0
-
         while not self.exit.is_set():
-            with condition:
+            with self.position_lock as plock:
+                current_read_position = plock.position
                 with open(self.input, "r") as f:
-                    f.seek(self.position)
+                    f.seek(current_read_position)
                     line = f.readline().strip()
-                    if self.position == f.tell():
-                        logger.info("waiting for input..")
-                        start = time.time()
-                        condition.wait()
-                        logger.debug("  was waiting {} seconds".format(time.time() - start))
+                    while current_read_position == f.tell():
+                        self.wait_producer()
                         line = f.readline().strip()
-                    logger.info("  reading  \"{}\" at pos {}".format(line, self.position))
-                    self.position = f.tell()
+                    logger.info("reading  \"{}\" at pos {}".format(line, current_read_position))
+                    plock.position = f.tell()
             time.sleep(random.random())
+
+    def wait_producer(self):
+        with self.condition:
+            logger.info("      waiting for input..")
+            start = time.time()
+            self.condition.wait()
+            logger.debug("      ..was waiting {} seconds".format(time.time() - start))
 
 
 if __name__ == "__main__":
@@ -97,21 +128,10 @@ if __name__ == "__main__":
                              "otherwise read file from begin.")
 
     args = parser.parse_args()
-    logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO,
-                        format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
-                        datefmt='%H:%M:%s')
-    # Create empty file if it not exist, to prevent fail in case read before write
-    if not os.path.exists(args.file_output):
-        open(args.file_output, 'a').close()
 
-    logging.info("Listening to file: {}".format(os.path.abspath(args.file_output)))
-    if args.follow:
-        with open(args.file_output, 'a') as f:
-            _START_POSITION = f.tell()
-            logging.info(
-                "Configured to read only new inputs, started from pos: {}".format(_START_POSITION))
+    logger.setLevel(level=logging.DEBUG if args.debug else logging.INFO)
 
-
+    # Make sure that we can stop threads
     def keyboard_exit(signum, frame):
         logging.info("KeyboardInterrupt (ID: {}) has been caught. Cleaning up...".format(signum))
         raise
@@ -119,18 +139,43 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, keyboard_exit)
     signal.signal(signal.SIGINT, keyboard_exit)
 
-    condition = Condition()
-    consumer = Consumer(input=args.file_output, follow=args.follow)
-    producer = Producer(output=args.file_output)
+    # Create empty file if it not exist, to prevent fail in case read before write
+    if not os.path.exists(args.file_output):
+        open(args.file_output, 'a').close()
+
+    logging.info("Listening to file: {}".format(os.path.abspath(args.file_output)))
+
+    start_position = 0
+    if args.follow:
+        with open(args.file_output, 'a') as f:
+            start_position = f.tell()
+            logging.info("Configured to read only new inputs..")
+    logging.info("Starting from pos: {}".format(start_position))
+
+    cond = Condition()
+    event = Event()
+    position = PositionLock(start_position)
+
+    consumer1 = Consumer(args.file_output, cond, event,
+                         position_lock=position, name="Consumer1")
+    consumer2 = Consumer(args.file_output, cond, event,
+                         position_lock=position, name="Consumer2")
+    producer = Producer(args.file_output, cond, event=event, name="Producer")
 
     try:
         # FIXME: Try to improve functionality: one producer thread and 2 consumer threads (use Lock for lock start position for every consumer and also producer)
-        consumer.start()
+        # QUESTION: Why do we need to lock start position for producer?
+        #           It always append data to the file, so start position == file.st_size
+
+        consumer1.start()
+        consumer2.start()
         producer.start()
         while True:
             time.sleep(0.5)
     except Exception:
-        consumer.exit.set()
+        consumer1.exit.set()
+        consumer2.exit.set()
         producer.exit.set()
-        consumer.join()
+        consumer1.join()
+        consumer2.join()
         producer.join()
