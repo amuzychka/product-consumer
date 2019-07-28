@@ -21,8 +21,21 @@ logger = logging.getLogger("ProdCons")
 
 
 class PositionLock(object):
+    """
+    Handle sharing consumers read position between threads. Each consumer should read data from
+    new line, can work as context manager.
 
-    def __init__(self, start_position):
+    position_lock = PositionLock()
+    with position_lock() as plock:
+        current_position = plock.position
+        # ... do some stuff, change value for current_position
+        plock.position = current_position
+    """
+    def __init__(self, start_position=0):
+        """
+        Initialize start_position and create lock
+        :param start_position: start position for file reading
+        """
         self.lock = Lock()
         self._position = start_position
 
@@ -31,7 +44,8 @@ class PositionLock(object):
         return self
 
     def __exit__(self, *args, **kwargs):
-        self.lock.release()
+        if self.lock.locked():
+            self.lock.release()
 
     @property
     def position(self):
