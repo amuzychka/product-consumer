@@ -109,6 +109,12 @@ class Consumer(Thread):
 
     def run(self):
         while not self.exit.is_set():
+            # FIXME: Ususally lock should be minimal in time.
+            # I think it should be like:
+            # * Wait for producer notification
+            # * Try to lock with some timeout (because other consumer can acquire it) 
+            # * When lock is success - just read data, update position and unlock
+            # * Process data
             with self.position_lock as plock:
                 current_read_position = plock.position
                 with open(self.input, "r") as f:
@@ -187,6 +193,7 @@ if __name__ == "__main__":
         while True:
             time.sleep(0.5)
     except Exception:
+        # FIXME: event object is the same for producer and consumers. I think event.set() is enought here. Right?
         consumer1.exit.set()
         consumer2.exit.set()
         producer.exit.set()
