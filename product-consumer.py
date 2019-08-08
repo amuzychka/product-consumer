@@ -112,27 +112,25 @@ class Consumer(Thread):
             # FIXME: Ususally lock should be minimal in time.
             # I think it should be like:
             # * Wait for producer notification
-            # * Try to lock with some timeout (because other consumer can acquire it) 
+            # * Try to lock with some timeout (because other consumer can acquire it)
             # * When lock is success - just read data, update position and unlock
             # * Process data
-            with self.position_lock as plock:
-                current_read_position = plock.position
-                with open(self.input, "r") as f:
-                    f.seek(current_read_position)
-                    line = f.readline().strip()
-                    while current_read_position == f.tell():
-                        self.wait_producer()
-                        line = f.readline().strip()
-                    logger.info("reading  \"{}\" at pos {}".format(line, current_read_position))
-                    plock.position = f.tell()
-            time.sleep(random.random())
 
-    def wait_producer(self):
-        with self.condition:
-            logger.info("      waiting for input..")
-            start = time.time()
-            self.condition.wait()
-            logger.debug("      ..was waiting {} seconds".format(time.time() - start))
+            # Done
+            with self.condition:
+                logger.info("      waiting for input..")
+                start = time.time()
+                self.condition.wait(0.1)
+                logger.debug("      ..was waiting {} seconds".format(time.time() - start))
+                with open(self.input, "r") as f:
+                    with self.position_lock as plock:
+                        current_read_position = plock.position
+                        f.seek(current_read_position)
+                        line = f.readline().strip()
+                        if current_read_position != f.tell():
+                            logger.info("reading  \"{}\" at pos {}".format(line, current_read_position))
+                            plock.position = f.tell()
+            time.sleep(random.random())
 
 
 if __name__ == "__main__":
@@ -194,9 +192,8 @@ if __name__ == "__main__":
             time.sleep(0.5)
     except Exception:
         # FIXME: event object is the same for producer and consumers. I think event.set() is enought here. Right?
-        consumer1.exit.set()
-        consumer2.exit.set()
-        producer.exit.set()
+        # Right, thank you!
+        event.set()
         consumer1.join()
         consumer2.join()
         producer.join()
