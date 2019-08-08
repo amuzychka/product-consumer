@@ -125,9 +125,11 @@ class Consumer(Thread):
                 with open(self.input, "r") as f:
                     with self.position_lock as plock:
                         current_read_position = plock.position
-                        f.seek(current_read_position)
-                        line = f.readline().strip()
-                        if current_read_position != f.tell():
+                        f.seek(0, os.SEEK_END)
+                        last_file_position = f.tell()
+                        if current_read_position != last_file_position:
+                            f.seek(current_read_position)
+                            line = f.readline().strip()
                             logger.info("reading  \"{}\" at pos {}".format(line, current_read_position))
                             plock.position = f.tell()
             time.sleep(random.random())
